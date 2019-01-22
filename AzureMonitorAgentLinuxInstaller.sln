@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.271
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureMonitorAgentLinuxInstaller", "AzureMonitorAgentLinuxInstaller\AzureMonitorAgentLinuxInstaller.csproj", "{8EAC0ECE-C8A7-483D-83D6-1C927D9FB9D9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8EAC0ECE-C8A7-483D-83D6-1C927D9FB9D9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8EAC0ECE-C8A7-483D-83D6-1C927D9FB9D9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8EAC0ECE-C8A7-483D-83D6-1C927D9FB9D9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8EAC0ECE-C8A7-483D-83D6-1C927D9FB9D9}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F7788B7E-7577-4A10-8974-1EB78F8B8A39}
+	EndGlobalSection
+EndGlobal
