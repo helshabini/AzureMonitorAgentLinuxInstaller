@@ -15,9 +15,71 @@ namespace AzureMonitorAgentLinuxInstaller
 {
     public partial class AzureMonitorAgentLinuxInstaller : Form
     {
+        private BindingSource bindingSource1;
+
         public AzureMonitorAgentLinuxInstaller()
         {
             InitializeComponent();
+            InitializeServersList();
+        }
+
+        private void InitializeServersList()
+        {
+            bindingSource1 = new BindingSource();
+            bindingSource1.Add(new ServerListItem
+            {
+                Status = ServerListItemStatus.NotStarted,
+                ServerName = "autodeploytestvm1",
+                IPAddress = "13.80.79.12",
+                Port = 22,
+                Username = "vmadmin",
+                Password = "vmP@ssw0rd123",
+                Log = string.Empty
+            });
+            gvServersList.AutoGenerateColumns = false;
+            gvServersList.AutoSize = true;
+            gvServersList.DataSource = bindingSource1;
+            
+            // Initialize and add a Progress column
+            DataGridViewColumn column = new DataGridViewImageColumn();
+            column.DataPropertyName = "Progess";
+            column.Name = "Progress";
+            gvServersList.Columns.Add(column);
+
+            // Initialize and add a Server Name column.
+            column = new DataGridViewTextBoxColumn();
+            column.DataPropertyName = "ServerName";
+            column.Name = "Server Name";
+            gvServersList.Columns.Add(column);
+
+            // Initialize and add a IP Address column.
+            column = new DataGridViewTextBoxColumn();
+            column.DataPropertyName = "IPAddress";
+            column.Name = "IP Address";
+            gvServersList.Columns.Add(column);
+
+            // Initialize and add a Port column.
+            column = new DataGridViewTextBoxColumn();
+            column.DataPropertyName = "Port";
+            column.Name = "Port";
+            gvServersList.Columns.Add(column);
+
+            // Initialize and add a Username column.
+            column = new DataGridViewTextBoxColumn();
+            column.DataPropertyName = "Username";
+            column.Name = "Username";
+            gvServersList.Columns.Add(column);
+
+            // Initialize and add a Password column.
+            column = new DataGridViewTextBoxColumn();
+            column.DataPropertyName = "Password";
+            column.Name = "Password";
+            gvServersList.Columns.Add(column);
+
+            // Initialize and add a Password column.
+            column = new DataGridViewLinkColumn();
+            column.Name = "Log";
+            gvServersList.Columns.Add(column);
         }
 
         #region UI Manipulation
@@ -108,5 +170,25 @@ namespace AzureMonitorAgentLinuxInstaller
             //SCP the appropriate file on the server
             //Run the installer using required parameters
         }
+    }
+
+    public class ServerListItem
+    {
+        public ServerListItemStatus Status { get; set; }
+        public string ServerName { get; set; }
+        public string IPAddress { get; set; }
+        public short Port { get; set; }
+        public string Username { get; set; }
+        public string Password { get; set; }
+        public string Log { get; set; }
+    }
+
+    public enum ServerListItemStatus
+    {
+        NotStarted,
+        InProgress,
+        PartiallyCompleted,
+        Completed,
+        Failed
     }
 }
