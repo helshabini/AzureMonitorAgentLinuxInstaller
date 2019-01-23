@@ -19,6 +19,8 @@ namespace AzureMonitorAgentLinuxInstaller
     public partial class AzureMonitorAgentLinuxInstaller : Form
     {
         private BindingSource serverlistDataSource;
+        private string x64Agent = "omsagent-1.8.1-256.universal.x64.sh";
+        private string x86Agent = "omsagent-1.8.1-256.universal.x86.sh";
 
         public AzureMonitorAgentLinuxInstaller()
         {
@@ -171,9 +173,67 @@ namespace AzureMonitorAgentLinuxInstaller
             foreach (var item in serverlistDataSource)
             {
                 ServerListItem server = item as ServerListItem;
-                var connectionInfo = new ConnectionInfo(server.IPAddress,
-                                        server.Username,
-                                        new PasswordAuthenticationMethod(server.Username, server.Password));
+                var connectionInfo = new ConnectionInfo(server.IPAddress, server.Port, server.Username, new PasswordAuthenticationMethod(server.Username, server.Password));
+
+
+                using (var sshClient = new SshClient(connectionInfo))
+                {
+                    sshClient.Connect();
+                    string agentPath = string.Empty;
+
+                    var cmd = sshClient.CreateCommand("arch;");
+                    var result = cmd.BeginExecute();
+                    using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+                    {
+                        while (!result.IsCompleted || !reader.EndOfStream)
+                        {
+                            string line = reader.ReadLine();
+                            if (line != null)
+                            {
+                                if (line.Contains("x86_64"))
+                                {
+                                    agentPath = x64Agent;
+
+                                }
+                                else
+                                {
+                                    agentPath = x86Agent;
+                                }
+                            }
+                        }
+                    }
+                    cmd.EndExecute(result);
+
+                    using (var sftpClient = new SftpClient(connectionInfo))
+                    {
+                        sftpClient.Connect();
+
+                        using (var fileStream = new FileStream(agentPath, FileMode.Open))
+                        {
+                            Console.WriteLine("Uploading {0} ({1:N0} bytes)", agentPath, fileStream.Length);
+                            sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
+                            //To save time I am temporarly commenting this! The file should be already there.
+                            //sftpClient.UploadFile(fileStream, Path.GetFileName(agentPath));
+                        }
+                    }
+
+                    cmd = sshClient.CreateCommand("chmod +x ./" + Path.GetFileName(agentPath));
+                    result = cmd.BeginExecute();
+                    using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+                    {
+                        while (!result.IsCompleted || !reader.EndOfStream)
+                        {
+                            string line = reader.ReadLine();
+                            if (line != null)
+                            {
+                                //Log result
+                            }
+                        }
+                    }
+                    cmd.EndExecute(result);
+                }
+                
+
                 using (var client = new SshClient(connectionInfo))
                 {
                     client.Connect();
@@ -219,7 +279,7 @@ namespace AzureMonitorAgentLinuxInstaller
             }
             //Check whether server is x64 or x86
             //Install prerequisites using local yum repo for rpm or apt for debian (not important now as most servers would already have those files)
-            //SCP the appropriate file on the server
+            //SFTP the appropriate file on the server
             //Run the installer using required parameters
         }
     }
@@ -233,6 +293,7 @@ namespace AzureMonitorAgentLinuxInstaller
         public string Username { get; set; }
         public string Password { get; set; }
         public string Log { get; set; }
+        public string Architecture { get; set; }
     }
 
     public enum ServerListItemStatus
