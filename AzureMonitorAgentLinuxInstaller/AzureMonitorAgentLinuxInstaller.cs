@@ -18,6 +18,9 @@ namespace AzureMonitorAgentLinuxInstaller
 {
     public partial class AzureMonitorAgentLinuxInstaller : Form
     {
+
+        #region Initialization
+
         private BindingSource serverlistDataSource;
         private string x64Agent = "omsagent-1.8.1-256.universal.x64.sh";
         private string x86Agent = "omsagent-1.8.1-256.universal.x86.sh";
@@ -87,6 +90,8 @@ namespace AzureMonitorAgentLinuxInstaller
             gvServersList.Columns.Add(column);
         }
 
+        #endregion
+
         #region UI Manipulation
 
         private void btnAgentLocationNext_Click(object sender, EventArgs e)
@@ -147,6 +152,43 @@ namespace AzureMonitorAgentLinuxInstaller
 
         #endregion
 
+        #region Functions and Logic
+
+        private ServerDistro CheckDistro(SshClient client)
+        {
+            var cmd = client.CreateCommand("which rpm > /dev/null 2>&1; echo $?");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Equals("0"))
+                    {
+                        return ServerDistro.RPM;
+                    }
+                }
+            }
+            cmd.EndExecute(result);
+
+            cmd = client.CreateCommand("which dpkg > /dev/null 2>&1; echo $?");
+            result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Equals("0"))
+                    {
+                        return ServerDistro.Debian;
+                    }
+                }
+            }
+            cmd.EndExecute(result);
+
+            return ServerDistro.Unknown;
+        }
+
         private void DownloadAgents()
         {
             using (var httpClient = new HttpClient())
@@ -159,7 +201,13 @@ namespace AzureMonitorAgentLinuxInstaller
                 {
                     foreach (var asset in release.assets)
                     {
-                        webClient.DownloadFile(asset.browser_download_url.ToString(), asset.name.ToString());
+                        if (!File.Exists(asset.name.ToString()))
+                            //Log: Downloading File asset.name.ToString()
+                            webClient.DownloadFile(asset.browser_download_url.ToString(), asset.name.ToString());
+                        else
+                        {
+                            //Log: File already exists, skipping download
+                        }
                     }
                 }
             }
@@ -167,17 +215,55 @@ namespace AzureMonitorAgentLinuxInstaller
 
         private void btnDeploy_Click(object sender, EventArgs e)
         {
-            //DownloadAgents();
-            
-            //Loop on servers in the grid view
+            //Logic of operation. A little messy but I'm short on time...
+
+            if (rdAutoDownload.Checked)
+                DownloadAgents();
+
             foreach (var item in serverlistDataSource)
             {
                 ServerListItem server = item as ServerListItem;
                 var connectionInfo = new ConnectionInfo(server.IPAddress, server.Port, server.Username, new PasswordAuthenticationMethod(server.Username, server.Password));
-
-
                 using (var sshClient = new SshClient(connectionInfo))
                 {
+                    switch (CheckDistro(sshClient))
+                    {
+                        case ServerDistro.RPM:
+                            if (!CheckPrereqsRPM(sshClient))
+                            {
+                                //Log: Error, prereqs not ready
+                                continue;
+                            }
+                            break;
+                        case ServerDistro.Debian:
+                            if (!CheckPrereqsDebian(sshClient))
+                            {
+                                //Log: Error, prereqs not ready
+                                continue;
+                            }
+                            break;
+                    }
+
+                    if (chkInstallPrerequisites.Checked)
+                        InstallPrereqs();
+                    if (rdAutoDownload.Checked)
+                        TransferAgents();
+                    if (chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && chkProxyAuthentication.Checked)
+                        InstallAgentAndOnboardAndSetProxy();
+                    else if (chkInstallAgent.Checked && chkJoinLogAnalytics.Checked)
+                        InstallAgentAndOnboard();
+                    else if (!chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && chkProxyAuthentication.Checked)
+                        SwitchWorkspaceAndSetProxy();
+                    else if (!chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && !chkProxyAuthentication.Checked)
+                        SwitchWorkspace();
+                    else if (!chkInstallAgent.Checked && !chkJoinLogAnalytics.Checked && chkProxyAuthentication.Checked)
+                        SetProxy();
+
+
+            //Loop on servers in the grid view
+            
+
+                
                     sshClient.Connect();
                     string agentPath = string.Empty;
 
@@ -212,8 +298,8 @@ namespace AzureMonitorAgentLinuxInstaller
                         {
                             Console.WriteLine("Uploading {0} ({1:N0} bytes)", agentPath, fileStream.Length);
                             sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
-                            //To save time I am temporarly commenting this! The file should be already there.
-                            //sftpClient.UploadFile(fileStream, Path.GetFileName(agentPath));
+                                                              //To save time I am temporarly commenting this! The file should be already there.
+                                                              //sftpClient.UploadFile(fileStream, Path.GetFileName(agentPath));
                         }
                     }
 
@@ -232,7 +318,7 @@ namespace AzureMonitorAgentLinuxInstaller
                     }
                     cmd.EndExecute(result);
                 }
-                
+
 
                 using (var client = new SshClient(connectionInfo))
                 {
@@ -282,7 +368,279 @@ namespace AzureMonitorAgentLinuxInstaller
             //SFTP the appropriate file on the server
             //Run the installer using required parameters
         }
+
+        private bool CheckPrereqsDebian(SshClient sshClient)
+        {
+            
+        }
+
+        private bool CheckGlibcRPM(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("rpm -qa | grep glibc");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("glibc-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckOpensslRPM(SshClient sshClient)
+        {
+            var cmd = sshClient.CreateCommand("rpm -qa | grep openssl");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("openssl-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckCurlRPM(SshClient sshClient)
+        {
+            var cmd = sshClient.CreateCommand("rpm -qa | grep curl");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("curl-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckPythonLibsRPM(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("rpm -qa | grep python-libs");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("python-libs-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckPAMRPM(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("rpm -qa | grep pam");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("pam-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckGlibcDebian(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("dpkg -l | grep glibc");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("glibc-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckOpensslDebian(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("dpkg -l | grep openssl");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("openssl-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckCurlDebian(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("dpkg -l | grep curl");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("curl-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckPythonLibsDebian(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("dpkg -l | grep python-libs");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("python-libs-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private bool CheckPAMDebian(SshClient sshClient)
+        {
+
+            var cmd = sshClient.CreateCommand("dpkg -l | grep pam");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null && line.Contains("pam-"))
+                    {
+                        cmd.EndExecute(result);
+                        return true;
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return false;
+        }
+
+        private void SetProxy()
+        {
+            throw new NotImplementedException();
+        }
+
+        private void SwitchWorkspace()
+        {
+            throw new NotImplementedException();
+        }
+
+        private void SwitchWorkspaceAndSetProxy()
+        {
+            throw new NotImplementedException();
+        }
+
+        private void InstallAgentAndOnboard()
+        {
+            throw new NotImplementedException();
+        }
+
+        private void InstallAgentAndOnboardAndSetProxy()
+        {
+            throw new NotImplementedException();
+        }
+
+        private void InstallPrereqs()
+        {
+            throw new NotImplementedException();
+        }
+
+        private void TransferAgents()
+        {
+            throw new NotImplementedException();
+        }
+
+        #endregion
     }
+
+    #region Classes & Enums
 
     public class ServerListItem
     {
@@ -304,4 +662,13 @@ namespace AzureMonitorAgentLinuxInstaller
         Completed,
         Failed
     }
+
+    public enum ServerDistro
+    {
+        RPM,
+        Debian,
+        Unknown
+    }
+
+    #endregion
 }
