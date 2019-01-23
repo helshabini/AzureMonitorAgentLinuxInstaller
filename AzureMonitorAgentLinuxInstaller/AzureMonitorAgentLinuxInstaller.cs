@@ -154,9 +154,9 @@ namespace AzureMonitorAgentLinuxInstaller
 
         #region Functions and Logic
 
-        private ServerDistro CheckDistro(SshClient client)
+        private ServerDistro CheckDistro(SshClient sshClient)
         {
-            var cmd = client.CreateCommand("which rpm > /dev/null 2>&1; echo $?");
+            var cmd = sshClient.CreateCommand("which rpm > /dev/null 2>&1; echo $?");
             var result = cmd.BeginExecute();
             using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
             {
@@ -171,7 +171,7 @@ namespace AzureMonitorAgentLinuxInstaller
             }
             cmd.EndExecute(result);
 
-            cmd = client.CreateCommand("which dpkg > /dev/null 2>&1; echo $?");
+            cmd = sshClient.CreateCommand("which dpkg > /dev/null 2>&1; echo $?");
             result = cmd.BeginExecute();
             using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
             {
@@ -369,9 +369,14 @@ namespace AzureMonitorAgentLinuxInstaller
             //Run the installer using required parameters
         }
 
+        private bool CheckPrereqsRPM(SshClient sshClient)
+        {
+            throw new NotImplementedException();
+        }
+
         private bool CheckPrereqsDebian(SshClient sshClient)
         {
-            
+            throw new NotImplementedException();
         }
 
         private bool CheckGlibcRPM(SshClient sshClient)
