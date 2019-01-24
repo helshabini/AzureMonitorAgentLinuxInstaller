@@ -279,8 +279,6 @@
             // chkProxyAuthentication
             // 
             this.chkProxyAuthentication.AutoSize = true;
-            this.chkProxyAuthentication.Checked = true;
-            this.chkProxyAuthentication.CheckState = System.Windows.Forms.CheckState.Checked;
             this.chkProxyAuthentication.Location = new System.Drawing.Point(10, 47);
             this.chkProxyAuthentication.Name = "chkProxyAuthentication";
             this.chkProxyAuthentication.Size = new System.Drawing.Size(168, 17);
@@ -291,6 +289,7 @@
             // 
             // txtPassword
             // 
+            this.txtPassword.Enabled = false;
             this.txtPassword.Location = new System.Drawing.Point(591, 47);
             this.txtPassword.Name = "txtPassword";
             this.txtPassword.PasswordChar = '●';
@@ -307,6 +306,7 @@
             // 
             // txtUsername
             // 
+            this.txtUsername.Enabled = false;
             this.txtUsername.Location = new System.Drawing.Point(426, 45);
             this.txtUsername.Name = "txtUsername";
             this.txtUsername.Size = new System.Drawing.Size(100, 20);
@@ -433,12 +433,11 @@
             // chkInstallPrerequisites
             // 
             this.chkInstallPrerequisites.AutoSize = true;
-            this.chkInstallPrerequisites.Enabled = false;
             this.chkInstallPrerequisites.Location = new System.Drawing.Point(7, 7);
             this.chkInstallPrerequisites.Name = "chkInstallPrerequisites";
-            this.chkInstallPrerequisites.Size = new System.Drawing.Size(207, 17);
+            this.chkInstallPrerequisites.Size = new System.Drawing.Size(116, 17);
             this.chkInstallPrerequisites.TabIndex = 0;
-            this.chkInstallPrerequisites.Text = "Install Prerequisites (not yet supported)";
+            this.chkInstallPrerequisites.Text = "Install Prerequisites";
             this.chkInstallPrerequisites.UseVisualStyleBackColor = true;
             // 
             // tabDestinationServers

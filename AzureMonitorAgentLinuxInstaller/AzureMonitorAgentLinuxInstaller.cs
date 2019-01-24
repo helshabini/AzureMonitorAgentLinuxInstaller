@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json;
 using Renci.SshNet;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -22,8 +23,10 @@ namespace AzureMonitorAgentLinuxInstaller
         #region Initialization
 
         private BindingSource serverlistDataSource;
-        private string x64Agent = "omsagent-1.8.1-256.universal.x64.sh";
-        private string x86Agent = "omsagent-1.8.1-256.universal.x86.sh";
+        private string x64Agent = string.Empty;
+        private string x86Agent = string.Empty;
+        private const string rpmPackages = "packages/rpm/";
+        private const string debianPackages = "packages/debian/";
 
         public AzureMonitorAgentLinuxInstaller()
         {
@@ -33,60 +36,77 @@ namespace AzureMonitorAgentLinuxInstaller
 
         private void InitializeServersList()
         {
-            serverlistDataSource = new BindingSource();
-            serverlistDataSource.Add(new ServerListItem
+            serverlistDataSource = new BindingSource
             {
-                Status = ServerListItemStatus.NotStarted,
-                ServerName = "autodeploytestvm1",
-                IPAddress = "13.80.79.12",
-                Port = 22,
-                Username = "vmadmin",
-                Password = "vmP@ssw0rd123",
-                Log = string.Empty
-            });
+                new ServerListItem
+                {
+                    Status = ServerListItemStatus.NotStarted,
+                    ServerName = "oraclelinuxvm",
+                    IPAddress = "172.16.100.2",
+                    Port = 22,
+                    Username = "vmadmin",
+                    Password = "vmP@ssw0rd123",
+                    Log = string.Empty
+                }
+            };
+
             gvServersList.AutoGenerateColumns = false;
             gvServersList.AutoSize = true;
             gvServersList.DataSource = serverlistDataSource;
-            
+
             // Initialize and add a Progress column
-            DataGridViewColumn column = new DataGridViewImageColumn();
-            column.DataPropertyName = "Progess";
-            column.Name = "Progress";
+            DataGridViewColumn column = new DataGridViewImageColumn
+            {
+                DataPropertyName = "Progess",
+                Name = "Progress"
+            };
             gvServersList.Columns.Add(column);
 
             // Initialize and add a Server Name column.
-            column = new DataGridViewTextBoxColumn();
-            column.DataPropertyName = "ServerName";
-            column.Name = "Server Name";
+            column = new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "ServerName",
+                Name = "Server Name"
+            };
             gvServersList.Columns.Add(column);
 
             // Initialize and add a IP Address column.
-            column = new DataGridViewTextBoxColumn();
-            column.DataPropertyName = "IPAddress";
-            column.Name = "IP Address";
+            column = new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "IPAddress",
+                Name = "IP Address"
+            };
             gvServersList.Columns.Add(column);
 
             // Initialize and add a Port column.
-            column = new DataGridViewTextBoxColumn();
-            column.DataPropertyName = "Port";
-            column.Name = "Port";
+            column = new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Port",
+                Name = "Port"
+            };
             gvServersList.Columns.Add(column);
 
             // Initialize and add a Username column.
-            column = new DataGridViewTextBoxColumn();
-            column.DataPropertyName = "Username";
-            column.Name = "Username";
+            column = new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Username",
+                Name = "Username"
+            };
             gvServersList.Columns.Add(column);
 
             // Initialize and add a Password column.
-            column = new DataGridViewTextBoxColumn();
-            column.DataPropertyName = "Password";
-            column.Name = "Password";
+            column = new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Password",
+                Name = "Password"
+            };
             gvServersList.Columns.Add(column);
 
             // Initialize and add a Password column.
-            column = new DataGridViewLinkColumn();
-            column.Name = "Log";
+            column = new DataGridViewLinkColumn
+            {
+                Name = "Log"
+            };
             gvServersList.Columns.Add(column);
         }
 
@@ -208,6 +228,16 @@ namespace AzureMonitorAgentLinuxInstaller
                         {
                             //Log: File already exists, skipping download
                         }
+
+                        if (asset.name.ToString().Contains("x64"))
+                        {
+                            x64Agent = asset.name.ToString();
+                        }
+
+                        if (asset.name.ToString().Contains("x86"))
+                        {
+                            x86Agent = asset.name.ToString();
+                        }
                     }
                 }
             }
@@ -220,391 +250,178 @@ namespace AzureMonitorAgentLinuxInstaller
             if (rdAutoDownload.Checked)
                 DownloadAgents();
 
+            //Loop on the servers in our list
             foreach (var item in serverlistDataSource)
             {
                 ServerListItem server = item as ServerListItem;
+                //In the future we should also support cert login
                 var connectionInfo = new ConnectionInfo(server.IPAddress, server.Port, server.Username, new PasswordAuthenticationMethod(server.Username, server.Password));
                 using (var sshClient = new SshClient(connectionInfo))
                 {
-                    switch (CheckDistro(sshClient))
+                    sshClient.Connect();
+                    
+                    server.Distro = CheckDistro(sshClient);
+                    server.Architecture = CheckArchitecture(sshClient);
+                    if (!CheckPrereqs(sshClient, ref server))
                     {
-                        case ServerDistro.RPM:
-                            if (!CheckPrereqsRPM(sshClient))
-                            {
-                                //Log: Error, prereqs not ready
-                                continue;
-                            }
-                            break;
-                        case ServerDistro.Debian:
-                            if (!CheckPrereqsDebian(sshClient))
-                            {
-                                //Log: Error, prereqs not ready
-                                continue;
-                            }
-                            break;
+                        //Log: Error, prereqs not ready
+                        continue;
                     }
 
                     if (chkInstallPrerequisites.Checked)
                         InstallPrereqs();
                     if (rdAutoDownload.Checked)
-                        TransferAgents();
-                    if (chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && chkProxyAuthentication.Checked)
+                        TransferAgents(sshClient, server.Architecture);
+                    if (chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && chkUseProxy.Checked)
                         InstallAgentAndOnboardAndSetProxy();
                     else if (chkInstallAgent.Checked && chkJoinLogAnalytics.Checked)
-                        InstallAgentAndOnboard();
-                    else if (!chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && chkProxyAuthentication.Checked)
+                        InstallAgentAndOnboard(sshClient, ref server);
+                    else if (!chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && chkUseProxy.Checked)
                         SwitchWorkspaceAndSetProxy();
-                    else if (!chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && !chkProxyAuthentication.Checked)
+                    else if (!chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && !chkUseProxy.Checked)
                         SwitchWorkspace();
-                    else if (!chkInstallAgent.Checked && !chkJoinLogAnalytics.Checked && chkProxyAuthentication.Checked)
+                    else if (!chkInstallAgent.Checked && !chkJoinLogAnalytics.Checked && chkUseProxy.Checked)
                         SetProxy();
 
+                    sshClient.Disconnect();
+                }
+            }
+        }
 
-            //Loop on servers in the grid view
+        private bool CheckPrereqs(SshClient sshClient, ref ServerListItem server)
+        {
+            server.Prereqs = new List<Package>();
+
+            Package glibc = QueryPackage(sshClient, server.Distro, "glibc");
+            if (glibc != null)
+            {
+                server.Prereqs.Add(glibc);
+            }
+            else
+            {
+                return false;
+            }
+
+            Package openssl = QueryPackage(sshClient, server.Distro, "openssl");
+            if (openssl != null)
+            {
+                server.Prereqs.Add(openssl);
+            }
+            else
+            {
+                return false;
+            }
+
+            Package curl = QueryPackage(sshClient, server.Distro, "curl");
+            if (curl != null)
+            {
+                server.Prereqs.Add(curl);
+            }
+            else
+            {
+                return false;
+            }
+
+            Package pythonlibs = QueryPackage(sshClient, server.Distro, "python-libs");
+            if (pythonlibs != null)
+            {
+                server.Prereqs.Add(pythonlibs);
+            }
+            else
+            {
+                return false;
+            }
+
+            Package pam = QueryPackage(sshClient, server.Distro, "pam");
+            if (pam != null)
+            {
+                server.Prereqs.Add(pam);
+            }
+            else
+            {
+                return false;
+            }
+
+            //Log: All good...
+            return true;
+        }
+
+        private Package QueryPackage(SshClient sshClient, ServerDistro distro, string package)
+        {
+            string query = string.Empty;
+            switch (distro)
+            {
+                case ServerDistro.RPM:
+                    query = "rpm -qa  --queryformat '%{NAME};%{VERSION};%{RELEASE};%{ARCH}\n' | grep '^" + package + ";'";
+                    break;
+                case ServerDistro.Debian:
+                    query = "dpkg-query -W -f='${binary:Package};${Version};${Version};${Architecture}\n' " + package;
+                    break;
+                default:
+                    //Log: Might wanna try both
+                    return null;
+            }
             
-
-                
-                    sshClient.Connect();
-                    string agentPath = string.Empty;
-
-                    var cmd = sshClient.CreateCommand("arch;");
-                    var result = cmd.BeginExecute();
-                    using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-                    {
-                        while (!result.IsCompleted || !reader.EndOfStream)
-                        {
-                            string line = reader.ReadLine();
-                            if (line != null)
-                            {
-                                if (line.Contains("x86_64"))
-                                {
-                                    agentPath = x64Agent;
-
-                                }
-                                else
-                                {
-                                    agentPath = x86Agent;
-                                }
-                            }
-                        }
-                    }
-                    cmd.EndExecute(result);
-
-                    using (var sftpClient = new SftpClient(connectionInfo))
-                    {
-                        sftpClient.Connect();
-
-                        using (var fileStream = new FileStream(agentPath, FileMode.Open))
-                        {
-                            Console.WriteLine("Uploading {0} ({1:N0} bytes)", agentPath, fileStream.Length);
-                            sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
-                                                              //To save time I am temporarly commenting this! The file should be already there.
-                                                              //sftpClient.UploadFile(fileStream, Path.GetFileName(agentPath));
-                        }
-                    }
-
-                    cmd = sshClient.CreateCommand("chmod +x ./" + Path.GetFileName(agentPath));
-                    result = cmd.BeginExecute();
-                    using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-                    {
-                        while (!result.IsCompleted || !reader.EndOfStream)
-                        {
-                            string line = reader.ReadLine();
-                            if (line != null)
-                            {
-                                //Log result
-                            }
-                        }
-                    }
-                    cmd.EndExecute(result);
-                }
-
-
-                using (var client = new SshClient(connectionInfo))
+            var cmd = sshClient.CreateCommand(query);
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
                 {
-                    client.Connect();
-
-                    IDictionary<Renci.SshNet.Common.TerminalModes, uint> termkvp = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>();
-                    termkvp.Add(Renci.SshNet.Common.TerminalModes.ECHO, 53);
-                    ShellStream shellStream = client.CreateShellStream("xterm", 80, 24, 800, 600, 1024, termkvp);
-
-                    //var cmd = client.CreateCommand("pwd; pwd;");
-                    shellStream.WriteLine("sudo pwd;");
-                    string rep = shellStream.Expect(new Regex(@"([$#>:])")); //expect password or user prompt
-
-                    server.Log += rep;
-
-                    //check to send password
-                    if (rep.Contains(":"))
+                    string line = reader.ReadLine();
+                    if (line != null)
                     {
-                        //send password
-                        shellStream.WriteLine(server.Password);
-                        rep = shellStream.Expect(new Regex(@"[$#>]")); //expect user or root prompt
-                        server.Log += rep;
+                        cmd.EndExecute(result);
+                        return Package.Parse(line);
                     }
-
-                    client.Disconnect();
-
-                    //var result = cmd.BeginExecute();
-
-                    //using (var reader =
-                    //           new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-                    //{
-                    //    while (!result.IsCompleted || !reader.EndOfStream)
-                    //    {
-                    //        string line = reader.ReadLine();
-                    //        if (line != null)
-                    //        {
-                    //            server.Log += (line + Environment.NewLine);
-                    //        }
-                    //    }
-                    //}
-
-                    //cmd.EndExecute(result);
                 }
             }
-            //Check whether server is x64 or x86
-            //Install prerequisites using local yum repo for rpm or apt for debian (not important now as most servers would already have those files)
-            //SFTP the appropriate file on the server
-            //Run the installer using required parameters
+
+            cmd.EndExecute(result);
+            //Log: Package unavailable
+            return null;
         }
 
-        private bool CheckPrereqsRPM(SshClient sshClient)
+        private void TransferPrereqs(SshClient sshClient, ServerDistro distro)
+        {
+            string prereqsPath = (distro == ServerDistro.RPM) ? rpmPackages : debianPackages;
+
+            //using (var sftpClient = new SftpClient(sshClient.ConnectionInfo))
+            //{
+            //    sftpClient.Connect();
+            //    if (sftpClient.Exists("/packages"))
+            //    {
+            //        //Log: Agent already exists on destination
+            //        return;
+            //    }
+            //    using (var fileStream = new FileStream(agentPath, FileMode.Open))
+            //    {
+            //        Console.WriteLine("Uploading {0} ({1:N0} bytes)", agentPath, fileStream.Length);
+            //        sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
+            //        sftpClient.(fileStream, Path.GetFileName(agentPath));
+            //    }
+            //}
+
+            ////chmod +x for the file to be executable
+            //var cmd = sshClient.CreateCommand("chmod +x ./" + Path.GetFileName(agentPath));
+            //var result = cmd.BeginExecute();
+            //using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            //{
+            //    while (!result.IsCompleted || !reader.EndOfStream)
+            //    {
+            //        string line = reader.ReadLine();
+            //        if (line != null)
+            //        {
+            //            //Log: result
+            //        }
+            //    }
+            //}
+            //cmd.EndExecute(result);
+        }
+
+        private void InstallPrereqs()
         {
             throw new NotImplementedException();
-        }
-
-        private bool CheckPrereqsDebian(SshClient sshClient)
-        {
-            throw new NotImplementedException();
-        }
-
-        private bool CheckGlibcRPM(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("rpm -qa | grep glibc");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("glibc-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckOpensslRPM(SshClient sshClient)
-        {
-            var cmd = sshClient.CreateCommand("rpm -qa | grep openssl");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("openssl-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckCurlRPM(SshClient sshClient)
-        {
-            var cmd = sshClient.CreateCommand("rpm -qa | grep curl");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("curl-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckPythonLibsRPM(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("rpm -qa | grep python-libs");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("python-libs-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckPAMRPM(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("rpm -qa | grep pam");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("pam-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckGlibcDebian(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("dpkg -l | grep glibc");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("glibc-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckOpensslDebian(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("dpkg -l | grep openssl");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("openssl-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckCurlDebian(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("dpkg -l | grep curl");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("curl-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckPythonLibsDebian(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("dpkg -l | grep python-libs");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("python-libs-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
-        }
-
-        private bool CheckPAMDebian(SshClient sshClient)
-        {
-
-            var cmd = sshClient.CreateCommand("dpkg -l | grep pam");
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null && line.Contains("pam-"))
-                    {
-                        cmd.EndExecute(result);
-                        return true;
-                    }
-                }
-            }
-
-            cmd.EndExecute(result);
-            //Log: Package unavailable
-            return false;
         }
 
         private void SetProxy()
@@ -622,9 +439,28 @@ namespace AzureMonitorAgentLinuxInstaller
             throw new NotImplementedException();
         }
 
-        private void InstallAgentAndOnboard()
+        private void InstallAgentAndOnboard(SshClient sshClient, ref ServerListItem server)
         {
-            throw new NotImplementedException();
+            IDictionary<Renci.SshNet.Common.TerminalModes, uint> termkvp = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>
+            {
+                { Renci.SshNet.Common.TerminalModes.ECHO, 53 }
+            };
+            ShellStream shellStream = sshClient.CreateShellStream("xterm", 80, 24, 800, 600, 1024, termkvp);
+
+            //var cmd = client.CreateCommand("pwd; pwd;");
+            shellStream.WriteLine("sudo pwd;");
+            string rep = shellStream.Expect(new Regex(@"([$#>:])")); //expect password or user prompt
+
+            server.Log += rep;
+
+            //check to send password
+            if (rep.Contains(":"))
+            {
+                //send password
+                shellStream.WriteLine(server.Password);
+                rep = shellStream.Expect(new Regex(@"[$#>]")); //expect user or root prompt
+                server.Log += rep;
+            }
         }
 
         private void InstallAgentAndOnboardAndSetProxy()
@@ -632,14 +468,72 @@ namespace AzureMonitorAgentLinuxInstaller
             throw new NotImplementedException();
         }
 
-        private void InstallPrereqs()
+        private ServerArchitecture CheckArchitecture(SshClient sshClient)
         {
-            throw new NotImplementedException();
+            var cmd = sshClient.CreateCommand("arch;");
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null)
+                    {
+                        if (line.Equals("x86_64"))
+                        {
+                            cmd.EndExecute(result);
+                            return ServerArchitecture.x64;
+
+                        }
+                        else if (line.Equals("i686"))
+                        {
+                            cmd.EndExecute(result);
+                            return ServerArchitecture.x86;
+                        }
+                    }
+                }
+            }
+
+            cmd.EndExecute(result);
+            //Log: Unknown arch
+            return ServerArchitecture.Unknown;
         }
 
-        private void TransferAgents()
+        private void TransferAgents(SshClient sshClient, ServerArchitecture arch)
         {
-            throw new NotImplementedException();
+            string agentPath = (arch == ServerArchitecture.x64) ? x64Agent : x86Agent;
+
+            using (var sftpClient = new SftpClient(sshClient.ConnectionInfo))
+            {
+                sftpClient.Connect();
+                if (sftpClient.Exists(Path.GetFileName(agentPath)))
+                {
+                    //Log: Agent already exists on destination
+                    return;
+                }
+                using (var fileStream = new FileStream(agentPath, FileMode.Open))
+                {
+                    Console.WriteLine("Uploading {0} ({1:N0} bytes)", agentPath, fileStream.Length);
+                    sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
+                    sftpClient.UploadFile(fileStream, Path.GetFileName(agentPath));
+                }
+            }
+
+            //chmod +x for the file to be executable
+            var cmd = sshClient.CreateCommand("chmod +x ./" + Path.GetFileName(agentPath));
+            var result = cmd.BeginExecute();
+            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+            {
+                while (!result.IsCompleted || !reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null)
+                    {
+                        //Log: result
+                    }
+                }
+            }
+            cmd.EndExecute(result);
         }
 
         #endregion
@@ -656,7 +550,9 @@ namespace AzureMonitorAgentLinuxInstaller
         public string Username { get; set; }
         public string Password { get; set; }
         public string Log { get; set; }
-        public string Architecture { get; set; }
+        public ServerDistro Distro { get; set; }
+        public ServerArchitecture Architecture { get; set; }
+        public List<Package> Prereqs { get; set; }
     }
 
     public enum ServerListItemStatus
@@ -673,6 +569,42 @@ namespace AzureMonitorAgentLinuxInstaller
         RPM,
         Debian,
         Unknown
+    }
+
+    public enum ServerArchitecture
+    {
+        x64,
+        x86,
+        Unknown
+    }
+
+    public class ServerPrereqs
+    {
+        public string Glibc { get; set; }
+        public string Curl { get; set; }
+        public string Openssl { get; set; }
+        public string PythonLibs { get; set; }
+        public string PAM { get; set; }
+    }
+
+    public class Package
+    {
+        public string Name { get; set; }
+        public string Version { get; set; }
+        public string Release { get; set; }
+        public string Architecture { get; set; }
+
+        public static Package Parse (string packageString)
+        {
+            string[] parts = packageString.Split(';');
+            return new Package()
+            {
+                Name = parts[0],
+                Version = (parts[1].Split('-'))[0],
+                Release = parts[2].Split('-').Count() > 1 ? (parts[2].Split('-'))[1] : parts[2],
+                Architecture = parts[3]
+            };
+        }
     }
 
     #endregion
