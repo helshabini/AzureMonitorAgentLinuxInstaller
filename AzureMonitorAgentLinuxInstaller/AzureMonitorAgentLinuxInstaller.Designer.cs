@@ -435,9 +435,9 @@
             this.chkInstallPrerequisites.AutoSize = true;
             this.chkInstallPrerequisites.Location = new System.Drawing.Point(7, 7);
             this.chkInstallPrerequisites.Name = "chkInstallPrerequisites";
-            this.chkInstallPrerequisites.Size = new System.Drawing.Size(116, 17);
+            this.chkInstallPrerequisites.Size = new System.Drawing.Size(209, 17);
             this.chkInstallPrerequisites.TabIndex = 0;
-            this.chkInstallPrerequisites.Text = "Install Prerequisites";
+            this.chkInstallPrerequisites.Text = "Install Prerequisites (Not yet supported)";
             this.chkInstallPrerequisites.UseVisualStyleBackColor = true;
             // 
             // tabDestinationServers

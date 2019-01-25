@@ -25,8 +25,8 @@ namespace AzureMonitorAgentLinuxInstaller
         private BindingSource serverlistDataSource;
         private string x64Agent = string.Empty;
         private string x86Agent = string.Empty;
-        private const string rpmPackages = "packages/rpm/";
-        private const string debianPackages = "packages/debian/";
+        private const string rpmPackages = @"packages\rpm";
+        private const string debianPackages = @"packages\debian";
 
         public AzureMonitorAgentLinuxInstaller()
         {
@@ -256,20 +256,25 @@ namespace AzureMonitorAgentLinuxInstaller
                 ServerListItem server = item as ServerListItem;
                 //In the future we should also support cert login
                 var connectionInfo = new ConnectionInfo(server.IPAddress, server.Port, server.Username, new PasswordAuthenticationMethod(server.Username, server.Password));
+                connectionInfo.Encoding = Encoding.GetEncoding("ISO-8859-1");
                 using (var sshClient = new SshClient(connectionInfo))
                 {
                     sshClient.Connect();
-                    
+
                     server.Distro = CheckDistro(sshClient);
                     server.Architecture = CheckArchitecture(sshClient);
-                    if (!CheckPrereqs(sshClient, ref server))
-                    {
-                        //Log: Error, prereqs not ready
-                        continue;
-                    }
 
                     if (chkInstallPrerequisites.Checked)
-                        InstallPrereqs();
+                    {
+                        if (!CheckPrereqs(sshClient, ref server))
+                        {
+                            //Log: Error, prereqs not ready
+                            continue;
+                        }
+                        TransferPrereqs(sshClient, server.Distro);
+                        InstallPrereqs(sshClient, server.Distro);
+                    }
+
                     if (rdAutoDownload.Checked)
                         TransferAgents(sshClient, server.Architecture);
                     if (chkInstallAgent.Checked && chkJoinLogAnalytics.Checked && chkUseProxy.Checked)
@@ -382,25 +387,71 @@ namespace AzureMonitorAgentLinuxInstaller
             return null;
         }
 
+        public static List<string> ListPrereqsFiles(string sDir)
+        {
+            List<string> files = new List<string>();
+            try
+            {
+                foreach (string d in Directory.GetDirectories(sDir))
+                {
+                    foreach (string f in Directory.GetFiles(d))
+                    {
+                        files.Add(f);
+                    }
+                    ListPrereqsFiles(d);
+                }
+            }
+            catch (Exception ex)
+            {
+                //Log: Problem with recursion?!
+                return null;
+            }
+
+            return files;
+        }
+
         private void TransferPrereqs(SshClient sshClient, ServerDistro distro)
         {
             string prereqsPath = (distro == ServerDistro.RPM) ? rpmPackages : debianPackages;
 
-            //using (var sftpClient = new SftpClient(sshClient.ConnectionInfo))
-            //{
-            //    sftpClient.Connect();
-            //    if (sftpClient.Exists("/packages"))
-            //    {
-            //        //Log: Agent already exists on destination
-            //        return;
-            //    }
-            //    using (var fileStream = new FileStream(agentPath, FileMode.Open))
-            //    {
-            //        Console.WriteLine("Uploading {0} ({1:N0} bytes)", agentPath, fileStream.Length);
-            //        sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
-            //        sftpClient.(fileStream, Path.GetFileName(agentPath));
-            //    }
-            //}
+            using (var sftpClient = new SftpClient(sshClient.ConnectionInfo))
+            {
+                sftpClient.Connect();
+
+                List<string> files = ListPrereqsFiles(prereqsPath);
+                foreach (string file in files)
+                {
+                    using (var fileStream = new FileStream(file, FileMode.Open))
+                    {
+                        Console.WriteLine("Uploading {0} ({1:N0} bytes)", file, fileStream.Length);
+                        sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
+                        string path = file.Remove(file.IndexOf(Path.GetFileName(file))).Replace(@"\", "/");
+                        string filename = Path.GetFileName(file);
+                        string[] dirs = path.TrimEnd('/').Split('/');
+                        foreach (var dir in dirs)
+                        {
+                            try
+                            {
+                                if (!sftpClient.Exists(dir))
+                                {
+                                    sftpClient.CreateDirectory(dir);
+                                }
+                                sftpClient.ChangeDirectory(dir);
+                            }
+                            catch
+                            {
+                                //Log: Directory already exists
+                            }
+                        }
+                        if (sftpClient.Exists(filename))
+                        {
+                            sftpClient.UploadFile(fileStream, filename);
+                        }
+                        sftpClient.ChangePermissions(filename, 755);
+                        sftpClient.ChangeDirectory("/home/"+sshClient.ConnectionInfo.Username);
+                    }
+                }
+            }
 
             ////chmod +x for the file to be executable
             //var cmd = sshClient.CreateCommand("chmod +x ./" + Path.GetFileName(agentPath));
@@ -419,9 +470,37 @@ namespace AzureMonitorAgentLinuxInstaller
             //cmd.EndExecute(result);
         }
 
-        private void InstallPrereqs()
+        private void InstallPrereqs(SshClient sshClient, ServerDistro distro)
         {
-            throw new NotImplementedException();
+            string prereqsPath = (distro == ServerDistro.RPM) ? rpmPackages : debianPackages;
+
+            List<string> files = ListPrereqsFiles(prereqsPath);
+            foreach (string file in files)
+            {
+                string path = "/home/" + 
+                    sshClient.ConnectionInfo.Username + 
+                    "/" + 
+                    file.Replace(@"\", "/");
+
+                string cmdText = distro == ServerDistro.RPM ?
+                    "yum install -y " + path:
+                    "apt install -y " + path;
+
+                var cmd = sshClient.CreateCommand(cmdText);
+                var result = cmd.BeginExecute();
+                using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+                {
+                    while (!result.IsCompleted || !reader.EndOfStream)
+                    {
+                        string line = reader.ReadLine();
+                        if (line != null)
+                        {
+                            //Log: result
+                        }
+                    }
+                }
+                cmd.EndExecute(result);
+            }
         }
 
         private void SetProxy()
@@ -441,25 +520,45 @@ namespace AzureMonitorAgentLinuxInstaller
 
         private void InstallAgentAndOnboard(SshClient sshClient, ref ServerListItem server)
         {
+            string installcmd = server.Architecture == ServerArchitecture.x64 ?
+                "sh /home/" + server.Username + "/" + x64Agent + " --install -w " + txtWorkspaceId.Text + " -s " + txtSharedKey.Text + "\n":
+                "sh /home/" + server.Username + "/" + x86Agent + " --install -w " + txtWorkspaceId.Text + " -s " + txtSharedKey.Text + "\n";
+
             IDictionary<Renci.SshNet.Common.TerminalModes, uint> termkvp = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>
             {
                 { Renci.SshNet.Common.TerminalModes.ECHO, 53 }
             };
-            ShellStream shellStream = sshClient.CreateShellStream("xterm", 80, 24, 800, 600, 1024, termkvp);
+            ShellStream shell = sshClient.CreateShellStream("xterm", 800, 240, 1024, 720, 1024, termkvp);
 
-            //var cmd = client.CreateCommand("pwd; pwd;");
-            shellStream.WriteLine("sudo pwd;");
-            string rep = shellStream.Expect(new Regex(@"([$#>:])")); //expect password or user prompt
+            //ShellStream shell = sshClient.CreateShellStream("Tail", 0, 0, 0, 0, 1024);
 
-            server.Log += rep;
+            StreamWriter wr = new StreamWriter(shell);
+            StreamReader rd = new StreamReader(shell);
+            wr.AutoFlush = true;
+            
+            wr.WriteLine("su");
 
+            string rep = shell.Expect(new Regex(@"([$#>:])"), new TimeSpan(0, 0, 3)); //expect password or user prompt
             //check to send password
-            if (rep.Contains(":"))
+            if (rep.EndsWith("Password: "))
             {
                 //send password
-                shellStream.WriteLine(server.Password);
-                rep = shellStream.Expect(new Regex(@"[$#>]")); //expect user or root prompt
+                wr.WriteLine(server.Password);
+                rep = shell.Expect(new Regex(@"[$#>]"), new TimeSpan(0, 0, 3));
                 server.Log += rep;
+                var cmd = sshClient.CreateCommand(installcmd);
+                var result = cmd.BeginExecute();
+                using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
+                {
+                    while (!result.IsCompleted || !reader.EndOfStream)
+                    {
+                        string line = reader.ReadLine();
+                        if (line != null)
+                        {
+                            server.Log += line;
+                        }
+                    }
+                }
             }
         }
 
@@ -513,27 +612,13 @@ namespace AzureMonitorAgentLinuxInstaller
                 }
                 using (var fileStream = new FileStream(agentPath, FileMode.Open))
                 {
+                    string filename = Path.GetFileName(agentPath);
                     Console.WriteLine("Uploading {0} ({1:N0} bytes)", agentPath, fileStream.Length);
                     sftpClient.BufferSize = 4 * 1024; // bypass Payload error large files
-                    sftpClient.UploadFile(fileStream, Path.GetFileName(agentPath));
+                    sftpClient.UploadFile(fileStream, filename);
+                    sftpClient.ChangePermissions(filename, 755);
                 }
             }
-
-            //chmod +x for the file to be executable
-            var cmd = sshClient.CreateCommand("chmod +x ./" + Path.GetFileName(agentPath));
-            var result = cmd.BeginExecute();
-            using (var reader = new StreamReader(cmd.OutputStream, Encoding.UTF8, true, 1024, true))
-            {
-                while (!result.IsCompleted || !reader.EndOfStream)
-                {
-                    string line = reader.ReadLine();
-                    if (line != null)
-                    {
-                        //Log: result
-                    }
-                }
-            }
-            cmd.EndExecute(result);
         }
 
         #endregion
